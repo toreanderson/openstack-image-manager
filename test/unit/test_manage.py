@@ -1089,6 +1089,82 @@ class TestManage(TestCase):
                     expected,
                 )
 
+    def test_same_property_value(self):
+        """values are compared as Glance stores them"""
+        for current, wanted, same in (
+            ("2028-08-09", date(2028, 8, 9), True),
+            ("2028-08-10", date(2028, 8, 9), False),
+            (True, True, True),
+            ("True", True, True),
+            ("true", True, True),
+            ("False", True, False),
+            ("yes", "yes", True),
+            ("13", "13", True),
+            ("8", 8, True),
+            ("debian", "Debian", False),
+            (None, "q35", False),
+            (None, None, True),
+        ):
+            with self.subTest(current=current, wanted=wanted):
+                self.assertEqual(main.same_property_value(current, wanted), same)
+
+    @mock.patch(
+        "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.remove_tag"
+    )
+    @mock.patch("openstack_image_manager.main.openstack.image.v2._proxy.Proxy.add_tag")
+    @mock.patch(
+        "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.update_image"
+    )
+    @mock.patch("openstack_image_manager.main.ImageManager.get_images")
+    def test_set_properties_writes_only_what_differs(
+        self, mock_get_images, mock_update_image, mock_add_tag, mock_remove_tag
+    ):
+        """properties already in Glance, whether openstacksdk exposes them as
+        attributes or in .properties, are not written again"""
+        meta = {
+            "architecture": "x86_64",
+            "os_distro": "debian",
+            "os_version": "13",
+            "hw_disk_bus": "scsi",
+            "hw_vif_multiqueue_enabled": True,
+            "hw_qemu_guest_agent": "yes",
+            "provided_until": date(2028, 8, 9),
+            "image_description": self.fake_image_dict["name"],
+        }
+        data = copy.deepcopy(FAKE_IMAGE_DATA)
+        data.update(
+            architecture="x86_64",
+            os_distro="debian",
+            os_version="13",
+            hw_disk_bus="scsi",
+            hw_vif_multiqueue_enabled=True,
+            hw_qemu_guest_agent="yes",
+        )
+        data["properties"].update(
+            provided_until="2028-08-09",
+            image_description=self.fake_image_dict["name"],
+            image_original_user=self.fake_image_dict["login"],
+            internal_version="1",
+        )
+
+        def written(meta):
+            mock_update_image.reset_mock()
+            mock_get_images.return_value = {self.fake_name: Image(**data)}
+            image = copy.deepcopy(self.fake_image_dict)
+            self.sot.set_properties(image, self.fake_name, self.versions, "1", "", meta)
+            return {
+                k
+                for c in mock_update_image.call_args_list
+                for k in c.kwargs
+                if k in meta
+            }
+
+        self.assertEqual(written(meta), set())
+        self.assertEqual(
+            written(dict(meta, os_version="12", provided_until=date(2026, 7, 11))),
+            {"os_version", "provided_until"},
+        )
+
     @mock.patch(
         "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.deactivate_image"
     )

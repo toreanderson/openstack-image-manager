@@ -1400,31 +1400,27 @@ class ImageManager:
                     image["meta"][key] = versions[version]["meta"][key]
 
             properties = cloud_image.properties
+            # openstacksdk turns the properties it knows, such as os_distro or
+            # hw_disk_bus, into attributes that are missing from .properties
+            current = {
+                **cloud_image.to_dict(original_names=True, computed=False),
+                **properties,
+            }
             for property in properties:
-                if property in image["meta"]:
-                    if image["meta"][property] != properties[property]:
-                        logger.info(
-                            f"Setting property {property}: {properties[property]} != {image['meta'][property]}"
-                        )
-                        self.image_proxy.update_image(
-                            cloud_image.id, **{property: str(image["meta"][property])}
-                        )
-
-                elif property not in [
-                    "self",
-                    "schema",
-                    "stores",
-                ] or not property.startswith("os_"):
+                if property not in image["meta"] and (
+                    property not in ["self", "schema", "stores"]
+                    or not property.startswith("os_")
+                ):
                     # FIXME: handle deletion of properties
                     logger.debug(f"Deleting property {property}")
 
-            for property in image["meta"]:
-                if property not in properties:
+            for property, value in image["meta"].items():
+                if not same_property_value(current.get(property), value):
                     logger.info(
-                        f"Setting property {property}: {image['meta'][property]}"
+                        f"Setting property {property}: {current.get(property)} != {value}"
                     )
                     self.image_proxy.update_image(
-                        cloud_image.id, **{property: str(image["meta"][property])}
+                        cloud_image.id, **{property: str(value)}
                     )
 
             logger.info(f"Checking status of '{name}'")
@@ -1843,6 +1839,23 @@ class ImageManager:
             logger.info(f"del - {image.name} - {project.name} ({project.domain_id})")
             if not self.CONF.dry_run:
                 self.image_proxy.remove_member(member, image.id)
+
+
+def same_property_value(current: typing.Any, wanted: typing.Any) -> bool:
+    """Return whether an image property in Glance already has the wanted value.
+
+    Glance stores property values as strings, while a definition's YAML gives
+    dates, booleans and numbers, so the values are compared as Glance stores
+    them, booleans regardless of case.
+    """
+    if current is None:
+        return wanted is None
+
+    def normalise(value: typing.Any) -> str:
+        text = str(value)
+        return text.lower() if text.lower() in ("true", "false") else text
+
+    return normalise(current) == normalise(wanted)
 
 
 def main():
