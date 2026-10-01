@@ -994,6 +994,101 @@ class TestManage(TestCase):
         self.assertIn("Ubuntu 20.04", result[0])
         self.assertEqual(result[2], mock_old_image)
 
+    @mock.patch("openstack_image_manager.main.ImageManager.set_properties")
+    @mock.patch("openstack_image_manager.main.ImageManager.import_image")
+    @mock.patch(
+        "openstack_image_manager.main.ImageManager.get_checksum_from_checksums_url"
+    )
+    @mock.patch("openstack_image_manager.main.ImageManager.get_images")
+    def test_process_image_updates_unchanged_latest(
+        self,
+        mock_get_images,
+        mock_get_checksum,
+        mock_import_image,
+        mock_set_properties,
+    ):
+        """an unchanged latest image still gets its definition applied"""
+        name = self.fake_image_dict["name"]
+        data = copy.deepcopy(FAKE_IMAGE_DATA)
+        data["properties"]["upstream_checksum"] = "a" * 64
+        data["properties"]["internal_version"] = "20260901"
+        mock_get_images.return_value = {name: Image(**data)}
+        mock_get_checksum.return_value = "a" * 64
+        versions = {
+            "latest": {
+                "url": self.fake_url,
+                "checksums_url": self.fake_checksums_url,
+                "meta": {"image_source": self.fake_url},
+            }
+        }
+        meta = self.fake_image_dict["meta"]
+
+        for dry_run, updated in ((False, True), (True, False)):
+            with self.subTest(dry_run=dry_run):
+                mock_set_properties.reset_mock()
+                self.sot.CONF.dry_run = dry_run
+
+                self.sot.process_image(self.fake_image_dict, versions, ["latest"], meta)
+
+                mock_import_image.assert_not_called()
+                if updated:
+                    mock_set_properties.assert_called_once_with(
+                        mock.ANY, name, versions, "latest", "a" * 64, meta
+                    )
+                else:
+                    mock_set_properties.assert_not_called()
+
+    @mock.patch("openstack_image_manager.main.ImageManager.set_properties")
+    @mock.patch("openstack_image_manager.main.ImageManager.import_image")
+    @mock.patch("openstack_image_manager.main.requests.head")
+    @mock.patch("openstack_image_manager.main.ImageManager.get_images")
+    def test_process_image_updates_existing_versions(
+        self,
+        mock_get_images,
+        mock_head,
+        mock_import_image,
+        mock_set_properties,
+    ):
+        """existing dated versions get their definition applied under their
+        names in Glance: the newest under the plain name, older ones under
+        their version-suffixed one"""
+        name = self.fake_image_dict["name"]
+        self.versions["2"] = {
+            "url": self.fake_url + "2",
+            "meta": {"image_source": self.fake_url + "2"},
+        }
+        meta = self.fake_image_dict["meta"]
+
+        for cloud, expected in (
+            # both versions in Glance: each gets its own definition
+            ([f"{name} (1)", name], [(f"{name} (1)", "1"), (name, "2")]),
+            # the older one is missing: the newest is not given its metadata
+            ([name], [(name, "2")]),
+        ):
+            with self.subTest(cloud=cloud):
+                mock_set_properties.reset_mock()
+                images = {}
+                for n in cloud:
+                    data = copy.deepcopy(FAKE_IMAGE_DATA)
+                    data["name"] = n
+                    # the plain name is the newest version, 2, once rotated
+                    data["properties"]["internal_version"] = "2" if n == name else "1"
+                    images[n] = Image(**data)
+                mock_get_images.return_value = images
+
+                self.sot.process_image(
+                    self.fake_image_dict, self.versions, ["1", "2"], meta
+                )
+
+                mock_import_image.assert_not_called()
+                self.assertEqual(
+                    [
+                        (c.args[1], c.args[3])
+                        for c in mock_set_properties.call_args_list
+                    ],
+                    expected,
+                )
+
     @mock.patch(
         "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.deactivate_image"
     )
