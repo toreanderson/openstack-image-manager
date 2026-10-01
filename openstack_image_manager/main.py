@@ -1415,13 +1415,16 @@ class ImageManager:
                     logger.debug(f"Deleting property {property}")
 
             for property, value in image["meta"].items():
-                if not same_property_value(current.get(property), value):
+                if property in SDK_MISREAD_PROPERTIES:
+                    # what openstacksdk reports cannot be trusted, so write it
+                    logger.debug(f"Setting property {property}: {value}")
+                elif same_property_value(current.get(property), value):
+                    continue
+                else:
                     logger.info(
                         f"Setting property {property}: {current.get(property)} != {value}"
                     )
-                    self.image_proxy.update_image(
-                        cloud_image.id, **{property: str(value)}
-                    )
+                self.image_proxy.update_image(cloud_image.id, **{property: str(value)})
 
             logger.info(f"Checking status of '{name}'")
             if (
@@ -1839,6 +1842,15 @@ class ImageManager:
             logger.info(f"del - {image.name} - {project.name} ({project.domain_id})")
             if not self.CONF.dry_run:
                 self.image_proxy.remove_member(member, image.id)
+
+
+# Image properties openstacksdk declares as booleans although Glance stores
+# them as strings: it converts them with bool(), so "false" reads back as True
+SDK_MISREAD_PROPERTIES = (
+    "hw_boot_menu",
+    "hw_vif_multiqueue_enabled",
+    "os_require_quiesce",
+)
 
 
 def same_property_value(current: typing.Any, wanted: typing.Any) -> bool:
