@@ -993,6 +993,14 @@ class ImageManager:
                     if image_checksum == upstream_checksum:
                         logger.info(f"No new version for '{image['name']}'")
                         existing_images.add(image["name"])
+                        self.update_existing_image(
+                            image,
+                            image["name"],
+                            versions,
+                            version,
+                            upstream_checksum,
+                            meta,
+                        )
                         return existing_images, imported_image, previous_image
                     else:
                         logger.info(f"New version for '{image['name']}'")
@@ -1068,7 +1076,40 @@ class ImageManager:
                 self.set_properties(
                     image.copy(), name, versions, version, upstream_checksum, meta
                 )
+            elif existence:
+                # the newest version of a multi image carries its plain name
+                # once rotated, older ones their version-suffixed name
+                if (
+                    name not in cloud_images
+                    and image["multi"]
+                    and version == sorted_versions[-1]
+                ):
+                    name = image["name"]
+                if name in cloud_images:
+                    self.update_existing_image(
+                        image, name, versions, version, upstream_checksum, meta
+                    )
         return existing_images, imported_image, previous_image
+
+    def update_existing_image(
+        self,
+        image: dict,
+        name: str,
+        versions: dict,
+        version: str,
+        upstream_checksum: str,
+        meta: dict,
+    ) -> None:
+        """
+        Apply the definition to an image that already exists, so that a change
+        to the definition takes effect without waiting for a new build
+        """
+        if self.CONF.dry_run:
+            logger.info(f"Skipping update of '{name}', running in dry-run mode")
+            return
+        self.set_properties(
+            image.copy(), name, versions, version, upstream_checksum, meta
+        )
 
     def set_properties(
         self,
