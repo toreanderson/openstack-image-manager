@@ -1420,6 +1420,15 @@ class ImageManager:
                     logger.debug(f"Setting property {property}: {value}")
                 elif same_property_value(current.get(property), value):
                     continue
+                elif (
+                    property == "os_purpose"
+                    and value == "generic"
+                    and current.get(property) == "oldgeneric"
+                    and name != image["name"]
+                ):
+                    # rename_images demoted this superseded version, so that it
+                    # is not a second generic image beside its successor
+                    continue
                 else:
                     logger.info(
                         f"Setting property {property}: {current.get(property)} != {value}"

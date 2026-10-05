@@ -1174,6 +1174,38 @@ class TestManage(TestCase):
         self.assertIn("hw_vif_multiqueue_enabled", written(meta))
 
     @mock.patch(
+        "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.remove_tag"
+    )
+    @mock.patch("openstack_image_manager.main.openstack.image.v2._proxy.Proxy.add_tag")
+    @mock.patch(
+        "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.update_image"
+    )
+    @mock.patch("openstack_image_manager.main.ImageManager.get_images")
+    def test_set_properties_keeps_oldgeneric(
+        self, mock_get_images, mock_update_image, mock_add_tag, mock_remove_tag
+    ):
+        """a superseded version demoted to oldgeneric stays oldgeneric, while
+        the image carrying the plain name follows the definition"""
+        meta = {"os_purpose": "generic"}
+        data = copy.deepcopy(FAKE_IMAGE_DATA)
+        data["properties"].update(os_purpose="oldgeneric", internal_version="1")
+
+        for name, kept in (
+            (self.fake_name, True),
+            (self.fake_image_dict["name"], False),
+        ):
+            with self.subTest(name=name):
+                mock_update_image.reset_mock()
+                mock_get_images.return_value = {name: Image(**dict(data, name=name))}
+                image = copy.deepcopy(self.fake_image_dict)
+                self.sot.set_properties(image, name, self.versions, "1", "", meta)
+                calls = [c.kwargs for c in mock_update_image.call_args_list]
+                self.assertEqual(
+                    {"os_purpose": "generic"} in calls,
+                    not kept,
+                )
+
+    @mock.patch(
         "openstack_image_manager.main.openstack.image.v2._proxy.Proxy.deactivate_image"
     )
     @mock.patch(
