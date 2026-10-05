@@ -1448,6 +1448,40 @@ class ImageManager:
                 logger.info(f"Setting visibility of '{name}' to '{visibility}'")
                 self.image_proxy.update_image(cloud_image.id, visibility=visibility)
 
+    def _is_generic_duplicate(
+        self, previous_image: Image, successor: typing.Optional[Image]
+    ) -> bool:
+        """
+        Check whether two images would both be generic for the same
+        architecture, distro, and version
+
+        Versions of a multi image can override os_version and other metadata,
+        so the previous image only conflicts with its successor if the
+        effective metadata of both images match.
+
+        The uniqueness requirement only covers images that public users can
+        find, so a private or hidden successor conflicts with nothing. The
+        visibility of the previous image does not matter: if it is kept
+        generic while superseded, oldgeneric is the recommended value anyway.
+
+        Params:
+            previous_image: the image losing the plain name
+            successor: the image taking the plain name, if any
+        """
+        if successor is None:
+            return False
+
+        if successor.visibility not in ("public", "community") or successor.is_hidden:
+            return False
+
+        return all(
+            image.properties.get("os_purpose") == "generic"
+            for image in (previous_image, successor)
+        ) and all(
+            previous_image[key] == successor[key]
+            for key in ("architecture", "os_distro", "os_version")
+        )
+
     def rename_images(
         self,
         image: dict,
@@ -1473,16 +1507,27 @@ class ImageManager:
             previous_latest = f"{name}{separator}({sorted_versions[-2]})"
 
             if name in cloud_images and previous_latest not in cloud_images:
+                update_attrs = {"name": previous_latest}
+
+                if self._is_generic_duplicate(
+                    cloud_images[name], cloud_images.get(latest)
+                ):
+                    # you can't have more than one image of the same architecture, distro, and version
+                    # with os_purpose=generic, so change this to oldgeneric for the previous image
+                    update_attrs["os_purpose"] = "oldgeneric"
+
                 logger.info(f"Renaming {name} to {previous_latest}")
-                self.image_proxy.update_image(
-                    cloud_images[name].id, name=previous_latest
-                )
+                self.image_proxy.update_image(cloud_images[name].id, **update_attrs)
 
             if latest in cloud_images:
                 logger.info(f"Renaming {latest} to {name}")
                 self.image_proxy.update_image(cloud_images[latest].id, name=name)
 
         elif len(sorted_versions) == 1 and name in cloud_images:
+            # all changes to the previous image are applied in a single update, so
+            # that it cannot be left half-retired when a request fails in between
+            update_attrs = {}
+
             internal_version = previous_image["properties"].get("internal_version")
             if internal_version in (None, "latest"):
                 # if the last modification date cannot be found, use the creation date of the image instead
@@ -1498,14 +1543,21 @@ class ImageManager:
                 logger.info(
                     f"Setting internal_version: {create_date} for {previous_latest}"
                 )
-                self.image_proxy.update_image(
-                    previous_image.id, **{"internal_version": create_date}
-                )
+                update_attrs["internal_version"] = create_date
             else:
                 previous_latest = f"{name}{separator}({internal_version})"
 
+            if self._is_generic_duplicate(
+                previous_image, cloud_images.get(imported_image.name)
+            ):
+                # you can't have more than one image of the same architecture, distro, and version
+                # with os_purpose=generic, so change this to oldgeneric for the previous image
+                update_attrs["os_purpose"] = "oldgeneric"
+
             logger.info(f"Renaming old latest '{name}' to '{previous_latest}'")
-            self.image_proxy.update_image(previous_image.id, name=previous_latest)
+            self.image_proxy.update_image(
+                previous_image.id, name=previous_latest, **update_attrs
+            )
 
             logger.info(f"Renaming imported image '{imported_image.name}' to '{name}'")
             self.image_proxy.update_image(imported_image.id, name=name)
