@@ -1435,10 +1435,9 @@ class TestManage(TestCase):
         )
 
         mock_update_image.assert_any_call(
-            previous_image.id, **{"internal_version": "20260922"}
-        )
-        mock_update_image.assert_any_call(
-            previous_image.id, name=f"{self.fake_image_dict['name']} (20260922)"
+            previous_image.id,
+            name=f"{self.fake_image_dict['name']} (20260922)",
+            internal_version="20260922",
         )
 
     @mock.patch(
